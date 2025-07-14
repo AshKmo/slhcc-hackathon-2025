@@ -366,7 +366,7 @@ func main() {
 
 	root.AppendChild(child)
 
-	childChild := CreateElement(50, true, 50, true, 25, true, 0, false, sdl.Color{0, 255, 0, 255}, false, false, true)
+	childChild := CreateElement(50, true, 50, true, 25, true, 0, false, sdl.Color{0, 255, 0, 255}, false, false, false)
 
 	child.AppendChild(childChild)
 
