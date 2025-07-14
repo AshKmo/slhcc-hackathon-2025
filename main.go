@@ -7,7 +7,7 @@ import (
 
 type ElementContent interface {
 	SetContainer(*Element)
-	Render(*sdl.Renderer) (*sdl.Texture, error) // should return a texture and not actually render anything on the window
+	Render(*sdl.Renderer) (*sdl.Texture, error)
 }
 
 type Element struct {
@@ -17,7 +17,9 @@ type Element struct {
 	HeightPercent bool
 
 	MarginX int32
+	MarginXPercent bool
 	MarginY int32
+	MarginYPercent bool
 
 	BackgroundColor sdl.Color
 
@@ -30,9 +32,17 @@ type Element struct {
 	Children []*Element
 
 	Content ElementContent
+
+	LastRenderedTexture *sdl.Texture
+	LastRenderedX int32
+	LastRenderedY int32
+	LastRenderedWidth int32
+	LastRenderedHeight int32
+	LastRenderedMarginX int32
+	LastRenderedMarginY int32
 }
 
-func CreateElement(width int32, widthPercent bool, height int32, heightPercent bool, marginX, marginY int32, backgroundColor sdl.Color, scrollX, scrollY bool) *Element {
+func CreateElement(width int32, widthPercent bool, height int32, heightPercent bool, marginX int32, marginXPercent bool, marginY int32, marginYPercent bool, backgroundColor sdl.Color, scrollX, scrollY bool) *Element {
 	return &Element {
 		Width: width,
 		WidthPercent: widthPercent,
@@ -40,7 +50,9 @@ func CreateElement(width int32, widthPercent bool, height int32, heightPercent b
 		HeightPercent: heightPercent,
 
 		MarginX: marginX,
+		MarginXPercent: marginXPercent,
 		MarginY: marginY,
+		MarginYPercent: marginYPercent,
 
 		BackgroundColor: backgroundColor,
 
@@ -127,8 +139,6 @@ func (e *Element) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
 
 		var maxWidth int32
 
-		childTextures := []*sdl.Texture{}
-
 		for _, child := range(e.Children) {
 			texture, err := child.Render(renderer)
 			if err != nil {
@@ -140,32 +150,40 @@ func (e *Element) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
 				return nil, err
 			}
 
-			maxWidth += width + 2 * child.MarginX
+			child.LastRenderedMarginX = child.MarginX
+			child.LastRenderedMarginY = child.MarginY
 
-			childTextures = append(childTextures, texture)
+			if child.MarginXPercent {
+				child.LastRenderedMarginX = child.MarginX * expandedW / 100
+			}
+			if child.MarginYPercent {
+				child.LastRenderedMarginY = child.MarginY * expandedH / 100
+			}
+
+			maxWidth += width + 2 * child.LastRenderedMarginX
+
+			child.LastRenderedTexture = texture
 		}
 
 		if expandedW >= 0 {
 			maxWidth = expandedW
 		}
 
-		locations := [][2]int32{}
-
 		var currentX, currentY int32
 
 		var currentLineHeight int32
 
-		for i, child := range(e.Children) {
-			texture := childTextures[i]
+		for _, child := range(e.Children) {
+			texture := child.LastRenderedTexture
 
 			_, _, width, height, err := texture.Query()
 			if err != nil {
 				return nil, err
 			}
 
-			totalHeight := height + 2 * child.MarginY
+			totalHeight := height + 2 * child.LastRenderedMarginY
 
-			newX := currentX + width + 2 * child.MarginX
+			newX := currentX + width + 2 * child.LastRenderedMarginX
 
 			if newX > maxWidth {
 				currentX = 0
@@ -177,7 +195,8 @@ func (e *Element) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
 				currentLineHeight = totalHeight
 			}
 
-			locations = append(locations, [2]int32{currentX + child.MarginX, currentY + child.MarginY})
+			child.LastRenderedX = currentX + child.LastRenderedMarginX - e.ScrollPositionX
+			child.LastRenderedY = currentY + child.LastRenderedMarginY - e.ScrollPositionY
 
 			currentX = newX
 		}
@@ -201,10 +220,8 @@ func (e *Element) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
 		renderer.SetDrawColor(e.BackgroundColor.R, e.BackgroundColor.G, e.BackgroundColor.B, e.BackgroundColor.A)
 		renderer.Clear()
 
-		for i, texture := range(childTextures) {
-			location := locations[i]
-
-			_, _, width, height, err := texture.Query()
+		for _, child := range(e.Children) {
+			_, _, width, height, err := child.LastRenderedTexture.Query()
 			if err != nil {
 				return nil, err
 			}
@@ -216,7 +233,7 @@ func (e *Element) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
 				e.ScrollPositionY = 0
 			}
 
-			err = renderer.Copy(texture, nil, &sdl.Rect{location[0] - e.ScrollPositionX, location[1] - e.ScrollPositionY, width, height})
+			err = renderer.Copy(child.LastRenderedTexture, nil, &sdl.Rect{child.LastRenderedX, child.LastRenderedY, width, height})
 			if err != nil {
 				return nil, err
 			}
@@ -294,13 +311,13 @@ func main() {
 	sdl.AddEventWatch(SDLEventWatch{}, nil)
 
 
-	root := CreateElement(1280, false, 720, false, 0, 0, sdl.Color{0, 255, 255, 255}, false, false)
+	root := CreateElement(1280, false, 720, false, 0, false, 0, false, sdl.Color{0, 255, 255, 255}, false, false)
 
-	child := CreateElement(50, true, 100, true, 0, 0, sdl.Color{255, 0, 0, 255}, false, false)
+	child := CreateElement(50, true, 100, true, 0, false, 0, false, sdl.Color{255, 0, 0, 255}, false, false)
 
 	root.AppendChild(child)
 
-	childChild := CreateElement(50, true, 50, true, 20, 0, sdl.Color{0, 255, 0, 255}, false, false)
+	childChild := CreateElement(50, true, 50, true, 25, true, 0, false, sdl.Color{0, 255, 0, 255}, false, false)
 
 	child.AppendChild(childChild)
 
