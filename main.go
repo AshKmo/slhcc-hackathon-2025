@@ -48,6 +48,9 @@ type Element struct {
 
 	EventHandlers []func(Event)
 
+	Selectable bool
+	Selected bool
+
 	LastRenderedTexture *sdl.Texture
 	LastRenderedX int32
 	LastRenderedY int32
@@ -57,7 +60,7 @@ type Element struct {
 	LastRenderedMarginY int32
 }
 
-func CreateElement(width int32, widthPercent bool, height int32, heightPercent bool, marginX int32, marginXPercent bool, marginY int32, marginYPercent bool, backgroundColor sdl.Color, scrollX, scrollY bool) *Element {
+func CreateElement(width int32, widthPercent bool, height int32, heightPercent bool, marginX int32, marginXPercent bool, marginY int32, marginYPercent bool, backgroundColor sdl.Color, scrollX, scrollY bool, selectable bool) *Element {
 	return &Element {
 		Width: width,
 		WidthPercent: widthPercent,
@@ -82,6 +85,8 @@ func CreateElement(width int32, widthPercent bool, height int32, heightPercent b
 		Content: nil,
 
 		EventHandlers: []func(Event){},
+
+		Selectable: selectable,
 	}
 }
 
@@ -149,6 +154,9 @@ func (e *Element) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
 		if err != nil {
 			return nil, err
 		}
+
+		e.LastRenderedWidth = contentWidth
+		e.LastRenderedHeight = contentHeight
 
 		return elementTexture, nil
 	} else {
@@ -256,6 +264,9 @@ func (e *Element) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
 			}
 		}
 
+		e.LastRenderedWidth = maxWidth
+		e.LastRenderedHeight = currentY
+
 		return elementTexture, nil
 	}
 
@@ -271,10 +282,14 @@ func (e *Element) MouseUpdate(event MouseEvent) {
 		handler(event)
 	}
 
+	if event.ButtonLeft {
+		e.Selected = e.Selectable && event.OverMe
+	}
+
 	for _, child := range(e.Children) {
 		overChild := event.OverMe && event.X >= child.LastRenderedX && event.X < child.LastRenderedX + child.LastRenderedWidth && event.Y >= child.LastRenderedY && event.Y < child.LastRenderedY + child.LastRenderedHeight
 
-		childEvent := MouseEvent{event.X, event.Y, event.ButtonLeft, event.ButtonMiddle, event.ButtonRight, overChild}
+		childEvent := MouseEvent{event.X - child.LastRenderedX, event.Y - child.LastRenderedY, event.ButtonLeft, event.ButtonMiddle, event.ButtonRight, overChild}
 
 		child.MouseUpdate(childEvent)
 	}
@@ -345,13 +360,13 @@ func main() {
 
 	sdl.AddEventWatch(SDLEventWatch{}, nil)
 
-	root := CreateElement(1280, false, 720, false, 0, false, 0, false, sdl.Color{0, 255, 255, 255}, false, false)
+	root := CreateElement(1280, false, 720, false, 0, false, 0, false, sdl.Color{0, 255, 255, 255}, false, false, false)
 
-	child := CreateElement(50, true, 100, true, 0, false, 0, false, sdl.Color{255, 0, 0, 255}, false, false)
+	child := CreateElement(50, true, 100, true, 0, false, 0, false, sdl.Color{255, 0, 0, 255}, false, false, false)
 
 	root.AppendChild(child)
 
-	childChild := CreateElement(50, true, 50, true, 25, true, 0, false, sdl.Color{0, 255, 0, 255}, false, false)
+	childChild := CreateElement(50, true, 50, true, 25, true, 0, false, sdl.Color{0, 255, 0, 255}, false, false, true)
 
 	child.AppendChild(childChild)
 
