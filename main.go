@@ -5,84 +5,255 @@ import (
 	"github.com/veandco/go-sdl2/ttf"
 )
 
-type Element interface {
-	GetPosition() (int32, int32)
-	SetPosition(int32, int32)
-	Size() (int32, int32)
-	Render(*sdl.Renderer, int32, int32) error
+type ElementContent interface {
+	SetContainer(*Element)
+	Render(*sdl.Renderer) (*sdl.Texture, error) // should return a texture and not actually render anything on the window
 }
 
-type TextBox struct {
-	Editable bool
-	Font *ttf.Font
-	Color sdl.Color
-	WrapLength int
+type Element struct {
+	Width int32
+	WidthPercent bool
+	Height int32
+	HeightPercent bool
 
-	x int32
-	y int32
-	content string
-	renderWidth int32
-	renderHeight int32
+	MarginX int32
+	MarginY int32
+
+	ScrollX bool
+	ScrollPositionX int32
+	ScrollY bool
+	ScrollPositionY int32
+
+	Parent *Element
+	Children []*Element
+
+	Content ElementContent
 }
 
-func NewTextBox(x, y int32, editable bool, font *ttf.Font, color sdl.Color, wrapLength int, content string) TextBox {
-	return TextBox{editable, font, color, wrapLength, x, y, content, 0, 0}
-}
+func CreateElement(width int32, widthPercent bool, height int32, heightPercent bool, marginX, marginY int32, scrollX, scrollY bool) Element {
+	return Element {
+		Width: width,
+		WidthPercent: widthPercent,
+		Height: height,
+		HeightPercent: heightPercent,
 
-func (t TextBox) GetPosition() (int32, int32) {
-	return t.x, t.y
-}
+		MarginX: marginX,
+		MarginY: marginY,
 
-func (t *TextBox) SetPosition(x, y int32) {
-	t.x = x
-	t.y = y
-}
+		ScrollX: scrollX,
+		ScrollPositionX: 0,
+		ScrollY: scrollY,
+		ScrollPositionY: 0,
 
-func (t *TextBox) SetContent() {
-	t.renderWidth = 0
-	t.renderHeight = 0
-	t.Size()
-}
+		Parent: nil,
+		Children: nil,
 
-func (t TextBox) renderToSurface() (*sdl.Surface, error) {
-	if t.WrapLength == 0 {
-		return t.Font.RenderUTF8Blended(t.content, t.Color)
-	} else {
-		return t.Font.RenderUTF8BlendedWrapped(t.content, t.Color, t.WrapLength)
+		Content: nil,
 	}
 }
 
-func (t *TextBox) Size() (int32, int32) {
-	if t.renderWidth == 0 || t.renderHeight == 0 {
-		surface, err := t.renderToSurface()
-		if err != nil {
-			panic(err)
+func (e *Element) ExpandedSize() (int32, int32) {
+	if e.Width > 0 && e.Height > 0 {
+		return e.Width, e.Height
+	}
+
+	realWidth, realHeight := e.Width, e.Height
+
+	var parentW, parentH int32 = 0, 0
+
+	if e.Parent != nil {
+		parentW, parentH = e.Parent.ExpandedSize()
+	}
+
+	if e.WidthPercent {
+		realWidth = e.Width * parentW / 100
+	}
+
+	if e.HeightPercent {
+		realHeight = e.Height * parentH / 100
+	}
+
+	return realWidth, realHeight
+}
+
+func (e *Element) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
+	realWidth, realHeight := e.ExpandedSize()
+
+	if e.Children == nil {
+		if e.Content != nil {
+			contentTexture, err := e.Content.Render(renderer)
+			if err != nil {
+				return nil, err
+			}
+
+			_, _, contentWidth, contentHeight, err := contentTexture.Query()
+			if err != nil {
+				return nil, err
+			}
+
+			if realWidth >= 0 {
+				contentWidth = realWidth
+			}
+			if realHeight >= 0 {
+				contentHeight = realHeight
+			}
+
+			elementTexture, err := renderer.CreateTexture(sdl.PIXELFORMAT_RGB24, sdl.TEXTUREACCESS_TARGET, contentWidth, contentHeight)
+			if err != nil {
+				return nil, err
+			}
+
+			err = renderer.SetRenderTarget(elementTexture)
+			if err != nil {
+				return nil, err
+			}
+
+			err = renderer.Copy(contentTexture, &sdl.Rect{0, 0, contentWidth, contentHeight}, nil)
+			if err != nil {
+				return nil, err
+			}
+
+			return elementTexture, nil
+		}
+	} else {
+		e.Content = nil
+
+		expandedW, expandedH := e.ExpandedSize()
+
+		var maxWidth int32
+
+		childTextures := []*sdl.Texture{}
+
+		for _, child := range(e.Children) {
+			texture, err := child.Render(renderer)
+			if err != nil {
+				return nil, err
+			}
+
+			_, _, width, _, err := texture.Query()
+			if err != nil {
+				return nil, err
+			}
+
+			maxWidth += width + 2 * child.MarginX
+
+			childTextures = append(childTextures, texture)
 		}
 
-		t.renderWidth = surface.W
-		t.renderHeight = surface.H
+		if expandedW >= 0 {
+			maxWidth = expandedW
+		}
+
+		locations := [][2]int32{}
+
+		var currentX, currentY int32
+
+		var currentLineHeight int32
+
+		for i, child := range(e.Children) {
+			texture := childTextures[i]
+
+			_, _, width, height, err := texture.Query()
+			if err != nil {
+				return nil, err
+			}
+
+			totalHeight := height + 2 * child.MarginY
+
+			newX := currentX + width + 2 * child.MarginX
+
+			if newX > maxWidth {
+				currentX = 0
+				currentY += currentLineHeight
+				currentLineHeight = 0
+			}
+
+			if totalHeight > currentLineHeight {
+				currentLineHeight = totalHeight
+			}
+
+			locations = append(locations, [2]int32{currentX + child.MarginX, currentY + child.MarginY})
+
+			currentX = newX
+		}
+
+		currentY += currentLineHeight
+
+		if expandedH >= 0 {
+			currentY = expandedH
+		}
+
+		elementTexture, err := renderer.CreateTexture(sdl.PIXELFORMAT_RGB24, sdl.TEXTUREACCESS_TARGET, maxWidth, currentY)
+		if err != nil {
+			return nil, err
+		}
+
+		err = renderer.SetRenderTarget(elementTexture)
+		if err != nil {
+			return nil, err
+		}
+
+		for i, texture := range(childTextures) {
+			location := locations[i]
+
+			_, _, width, height, err := texture.Query()
+			if err != nil {
+				return nil, err
+			}
+
+			if !e.ScrollX {
+				e.ScrollPositionX = 0
+			}
+			if !e.ScrollY {
+				e.ScrollPositionY = 0
+			}
+
+			err = renderer.Copy(texture, nil, &sdl.Rect{location[0] - e.ScrollPositionX, location[1] - e.ScrollPositionY, width, height})
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		return elementTexture, nil
 	}
 
-	return t.renderWidth, t.renderHeight
+	if realWidth < 0 {
+		realWidth = 0
+	}
+
+	if realHeight < 0 {
+		realHeight = 0
+	}
+
+	elementTexture, err := renderer.CreateTexture(sdl.PIXELFORMAT_RGB24, sdl.TEXTUREACCESS_TARGET, realWidth, realHeight)
+	if err != nil {
+		return nil, err
+	}
+
+	return elementTexture, nil
 }
 
-func (t TextBox) Render(renderer *sdl.Renderer, x int32, y int32) error {
-	surface, err := t.renderToSurface()
-	if err != nil {
-		return err
+func (e *Element) AppendChild(child *Element) {
+	if e.Children == nil {
+		e.Children = []*Element{}
 	}
 
-	texture, err := renderer.CreateTextureFromSurface(surface)
-	if err != nil {
-		return err
-	}
+	e.Content = nil
 
-	sizeX, sizeY := t.Size()
-
-	return renderer.Copy(texture, nil, &sdl.Rect{x + t.x, y + t.y, sizeX, sizeY})
+	e.Children = append(e.Children, child)
 }
 
-type SDLEventWatch struct {}
+func (e *Element) AddContent(content ElementContent) {
+	if content == nil {
+		return
+	}
+
+	e.Children = nil
+	e.Content = content
+	content.SetContainer(e)
+}
+
+type SDLEventWatch struct{}
 
 func (_ SDLEventWatch) FilterEvent(event sdl.Event, _ any) bool {
 	switch e := event.(type) {
@@ -125,12 +296,8 @@ func main() {
 
 	sdl.AddEventWatch(SDLEventWatch{}, nil)
 
-	font, err := ttf.OpenFont("./fonts/Xanh_Mono/XanhMono-Regular.ttf", 24)
-	if err != nil {
-		panic(err)
-	}
 
-	textbox := NewTextBox(0, 0, false, font, sdl.Color{0, 255, 0, 255}, 0, "This is awesome!")
+	root := CreateElement(1280, false, 720, false, 0, 0, false, false)
 
 	running := true
 	for running {
@@ -147,13 +314,19 @@ func main() {
 			}
 		}
 
+		windowW, windowH := window.GetSize()
+		root.Width = windowW
+		root.Height = windowH
+
 		renderer.SetDrawColor(0, 0, 0, 255)
 		renderer.Clear()
 
-		err := textbox.Render(renderer, 0, 0)
+		texture, err := root.Render(renderer)
 		if err != nil {
 			panic(err)
 		}
+
+		renderer.Copy(texture, &sdl.Rect{0, 0, windowW, windowH}, &sdl.Rect{0, 0, windowW, windowH})
 
 		renderer.Present()
 
