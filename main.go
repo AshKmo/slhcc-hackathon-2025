@@ -282,16 +282,16 @@ func (e *Element) MouseUpdate(event MouseEvent) {
 		handler(event)
 	}
 
-	if event.ButtonLeft {
-		e.Selected = e.Selectable && event.OverMe
-	}
-
 	for _, child := range(e.Children) {
 		overChild := event.OverMe && event.X >= child.LastRenderedX && event.X < child.LastRenderedX + child.LastRenderedWidth && event.Y >= child.LastRenderedY && event.Y < child.LastRenderedY + child.LastRenderedHeight
 
 		childEvent := MouseEvent{event.X - child.LastRenderedX, event.Y - child.LastRenderedY, event.ButtonLeft, event.ButtonMiddle, event.ButtonRight, overChild}
 
 		child.MouseUpdate(childEvent)
+	}
+
+	if event.ButtonLeft {
+		e.Selected = e.Selectable && event.OverMe
 	}
 }
 
