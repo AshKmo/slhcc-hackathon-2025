@@ -19,6 +19,8 @@ type Element struct {
 	MarginX int32
 	MarginY int32
 
+	BackgroundColor sdl.Color
+
 	ScrollX bool
 	ScrollPositionX int32
 	ScrollY bool
@@ -30,8 +32,8 @@ type Element struct {
 	Content ElementContent
 }
 
-func CreateElement(width int32, widthPercent bool, height int32, heightPercent bool, marginX, marginY int32, scrollX, scrollY bool) Element {
-	return Element {
+func CreateElement(width int32, widthPercent bool, height int32, heightPercent bool, marginX, marginY int32, backgroundColor sdl.Color, scrollX, scrollY bool) *Element {
+	return &Element {
 		Width: width,
 		WidthPercent: widthPercent,
 		Height: height,
@@ -39,6 +41,8 @@ func CreateElement(width int32, widthPercent bool, height int32, heightPercent b
 
 		MarginX: marginX,
 		MarginY: marginY,
+
+		BackgroundColor: backgroundColor,
 
 		ScrollX: scrollX,
 		ScrollPositionX: 0,
@@ -53,7 +57,7 @@ func CreateElement(width int32, widthPercent bool, height int32, heightPercent b
 }
 
 func (e *Element) ExpandedSize() (int32, int32) {
-	if e.Width > 0 && e.Height > 0 {
+	if !e.WidthPercent && !e.HeightPercent {
 		return e.Width, e.Height
 	}
 
@@ -79,45 +83,46 @@ func (e *Element) ExpandedSize() (int32, int32) {
 func (e *Element) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
 	realWidth, realHeight := e.ExpandedSize()
 
-	if e.Children == nil {
-		if e.Content != nil {
-			contentTexture, err := e.Content.Render(renderer)
-			if err != nil {
-				return nil, err
-			}
+	if e.Content != nil {
+		e.Children = nil
 
-			_, _, contentWidth, contentHeight, err := contentTexture.Query()
-			if err != nil {
-				return nil, err
-			}
-
-			if realWidth >= 0 {
-				contentWidth = realWidth
-			}
-			if realHeight >= 0 {
-				contentHeight = realHeight
-			}
-
-			elementTexture, err := renderer.CreateTexture(sdl.PIXELFORMAT_RGB24, sdl.TEXTUREACCESS_TARGET, contentWidth, contentHeight)
-			if err != nil {
-				return nil, err
-			}
-
-			err = renderer.SetRenderTarget(elementTexture)
-			if err != nil {
-				return nil, err
-			}
-
-			err = renderer.Copy(contentTexture, &sdl.Rect{0, 0, contentWidth, contentHeight}, nil)
-			if err != nil {
-				return nil, err
-			}
-
-			return elementTexture, nil
+		contentTexture, err := e.Content.Render(renderer)
+		if err != nil {
+			return nil, err
 		}
-	} else {
-		e.Content = nil
 
+		_, _, contentWidth, contentHeight, err := contentTexture.Query()
+		if err != nil {
+			return nil, err
+		}
+
+		if realWidth >= 0 {
+			contentWidth = realWidth
+		}
+		if realHeight >= 0 {
+			contentHeight = realHeight
+		}
+
+		elementTexture, err := renderer.CreateTexture(sdl.PIXELFORMAT_RGB24, sdl.TEXTUREACCESS_TARGET, contentWidth, contentHeight)
+		if err != nil {
+			return nil, err
+		}
+
+		err = renderer.SetRenderTarget(elementTexture)
+		if err != nil {
+			return nil, err
+		}
+
+		renderer.SetDrawColor(e.BackgroundColor.R, e.BackgroundColor.G, e.BackgroundColor.B, e.BackgroundColor.A)
+		renderer.Clear()
+
+		err = renderer.Copy(contentTexture, &sdl.Rect{0, 0, contentWidth, contentHeight}, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		return elementTexture, nil
+	} else {
 		expandedW, expandedH := e.ExpandedSize()
 
 		var maxWidth int32
@@ -193,6 +198,9 @@ func (e *Element) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
 			return nil, err
 		}
 
+		renderer.SetDrawColor(e.BackgroundColor.R, e.BackgroundColor.G, e.BackgroundColor.B, e.BackgroundColor.A)
+		renderer.Clear()
+
 		for i, texture := range(childTextures) {
 			location := locations[i]
 
@@ -217,20 +225,7 @@ func (e *Element) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
 		return elementTexture, nil
 	}
 
-	if realWidth < 0 {
-		realWidth = 0
-	}
-
-	if realHeight < 0 {
-		realHeight = 0
-	}
-
-	elementTexture, err := renderer.CreateTexture(sdl.PIXELFORMAT_RGB24, sdl.TEXTUREACCESS_TARGET, realWidth, realHeight)
-	if err != nil {
-		return nil, err
-	}
-
-	return elementTexture, nil
+	return nil, nil
 }
 
 func (e *Element) AppendChild(child *Element) {
@@ -239,6 +234,8 @@ func (e *Element) AppendChild(child *Element) {
 	}
 
 	e.Content = nil
+
+	child.Parent = e
 
 	e.Children = append(e.Children, child)
 }
@@ -297,7 +294,15 @@ func main() {
 	sdl.AddEventWatch(SDLEventWatch{}, nil)
 
 
-	root := CreateElement(1280, false, 720, false, 0, 0, false, false)
+	root := CreateElement(1280, false, 720, false, 0, 0, sdl.Color{0, 255, 255, 255}, false, false)
+
+	child := CreateElement(50, true, 100, true, 0, 0, sdl.Color{255, 0, 0, 255}, false, false)
+
+	root.AppendChild(child)
+
+	childChild := CreateElement(50, true, 50, true, 20, 0, sdl.Color{0, 255, 0, 255}, false, false)
+
+	child.AppendChild(childChild)
 
 	running := true
 	for running {
@@ -322,6 +327,11 @@ func main() {
 		renderer.Clear()
 
 		texture, err := root.Render(renderer)
+		if err != nil {
+			panic(err)
+		}
+
+		err = renderer.SetRenderTarget(nil)
 		if err != nil {
 			panic(err)
 		}
