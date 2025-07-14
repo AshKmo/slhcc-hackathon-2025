@@ -5,6 +5,19 @@ import (
 	"github.com/veandco/go-sdl2/ttf"
 )
 
+type Event interface{}
+
+type MouseEvent struct {
+	X int32
+	Y int32
+
+	ButtonLeft bool
+	ButtonMiddle bool
+	ButtonRight bool
+
+	OverMe bool
+}
+
 type ElementContent interface {
 	SetContainer(*Element)
 	Render(*sdl.Renderer) (*sdl.Texture, error)
@@ -32,6 +45,8 @@ type Element struct {
 	Children []*Element
 
 	Content ElementContent
+
+	EventHandlers []func(Event)
 
 	LastRenderedTexture *sdl.Texture
 	LastRenderedX int32
@@ -65,6 +80,8 @@ func CreateElement(width int32, widthPercent bool, height int32, heightPercent b
 		Children: nil,
 
 		Content: nil,
+
+		EventHandlers: []func(Event){},
 	}
 }
 
@@ -245,6 +262,24 @@ func (e *Element) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
 	return nil, nil
 }
 
+func (e *Element) AddEventHandler(handler func(Event)) {
+	e.EventHandlers = append(e.EventHandlers, handler)
+}
+
+func (e *Element) MouseUpdate(event MouseEvent) {
+	for _, handler := range(e.EventHandlers) {
+		handler(event)
+	}
+
+	for _, child := range(e.Children) {
+		overChild := event.OverMe && event.X >= child.LastRenderedX && event.X < child.LastRenderedX + child.LastRenderedWidth && event.Y >= child.LastRenderedY && event.Y < child.LastRenderedY + child.LastRenderedHeight
+
+		childEvent := MouseEvent{event.X, event.Y, event.ButtonLeft, event.ButtonMiddle, event.ButtonRight, overChild}
+
+		child.MouseUpdate(childEvent)
+	}
+}
+
 func (e *Element) AppendChild(child *Element) {
 	if e.Children == nil {
 		e.Children = []*Element{}
@@ -310,7 +345,6 @@ func main() {
 
 	sdl.AddEventWatch(SDLEventWatch{}, nil)
 
-
 	root := CreateElement(1280, false, 720, false, 0, false, 0, false, sdl.Color{0, 255, 255, 255}, false, false)
 
 	child := CreateElement(50, true, 100, true, 0, false, 0, false, sdl.Color{255, 0, 0, 255}, false, false)
@@ -356,6 +390,17 @@ func main() {
 		renderer.Copy(texture, &sdl.Rect{0, 0, windowW, windowH}, &sdl.Rect{0, 0, windowW, windowH})
 
 		renderer.Present()
+
+		mouseX, mouseY, mouseState := sdl.GetMouseState()
+
+		root.MouseUpdate(MouseEvent{
+			mouseX,
+			mouseY,
+			mouseState & sdl.BUTTON_LEFT != 0,
+			mouseState & sdl.BUTTON_MIDDLE != 0,
+			mouseState & sdl.BUTTON_RIGHT != 0,
+			true,
+		})
 
 		sdl.Delay(10)
 	}
