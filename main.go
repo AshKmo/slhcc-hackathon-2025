@@ -59,6 +59,8 @@ func (t *Text) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
 		return nil, err
 	}
 
+	surface.Free()
+
 	return texture, nil
 }
 
@@ -90,7 +92,8 @@ type Element struct {
 	Selectable bool
 	Selected bool
 
-	LastRenderedTexture *sdl.Texture
+	RenderingTexture *sdl.Texture
+
 	LastRenderedX int32
 	LastRenderedY int32
 	LastRenderedWidth int32
@@ -192,6 +195,8 @@ func (e *Element) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
 			return nil, err
 		}
 
+		contentTexture.Destroy()
+
 		if e.Selected {
 			renderer.SetDrawColor(0, 255, 255, 255)
 			drawThickRect(renderer, &sdl.Rect{0, 0, textureWidth, textureHeight}, 2)
@@ -229,7 +234,7 @@ func (e *Element) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
 
 			maxWidth += width + 2 * child.LastRenderedMarginX
 
-			child.LastRenderedTexture = texture
+			child.RenderingTexture = texture
 		}
 
 		if e.Width >= 0 {
@@ -241,7 +246,7 @@ func (e *Element) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
 		var currentLineHeight int32
 
 		for _, child := range(e.Children) {
-			texture := child.LastRenderedTexture
+			texture := child.RenderingTexture
 
 			_, _, width, height, err := texture.Query()
 			if err != nil {
@@ -291,7 +296,7 @@ func (e *Element) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
 		}
 
 		for _, child := range(e.Children) {
-			_, _, width, height, err := child.LastRenderedTexture.Query()
+			_, _, width, height, err := child.RenderingTexture.Query()
 			if err != nil {
 				return nil, err
 			}
@@ -303,10 +308,12 @@ func (e *Element) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
 				e.ScrollPositionY = 0
 			}
 
-			err = renderer.Copy(child.LastRenderedTexture, nil, &sdl.Rect{child.LastRenderedX, child.LastRenderedY, width, height})
+			err = renderer.Copy(child.RenderingTexture, nil, &sdl.Rect{child.LastRenderedX, child.LastRenderedY, width, height})
 			if err != nil {
 				return nil, err
 			}
+
+			child.RenderingTexture.Destroy()
 		}
 
 		e.LastRenderedWidth = maxWidth
@@ -380,21 +387,12 @@ func (_ SDLEventWatch) FilterEvent(event sdl.Event, _ any) bool {
 }
 
 func drawThickRect(renderer *sdl.Renderer, rect *sdl.Rect, thickness int32) error {
-	err := renderer.FillRect(&sdl.Rect{rect.X, rect.Y, rect.W, thickness})
-	if err != nil {
-		return err
-	}
-	err = renderer.FillRect(&sdl.Rect{rect.X, rect.Y, thickness, rect.H})
-	if err != nil {
-		return err
-	}
-	err = renderer.FillRect(&sdl.Rect{rect.X + rect.W - thickness, 0, thickness, rect.H})
-	if err != nil {
-		return err
-	}
-	err = renderer.FillRect(&sdl.Rect{0, rect.Y + rect.H - thickness, rect.W, thickness})
-	if err != nil {
-		return err
+	thickness--
+	for ; thickness >= 0; thickness-- {
+		err := renderer.DrawRect(&sdl.Rect{rect.X + thickness, rect.Y + thickness, rect.W - 2 * thickness, rect.H - 2 * thickness})
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -422,7 +420,8 @@ func main() {
 
 	sdl.AddEventWatch(SDLEventWatch{}, nil)
 
-	root := CreateElement(1280, false, 720, false, 0, false, 0, false, sdl.Color{64, 64, 64, 255}, false, false, false)
+	//#292c30
+	root := CreateElement(1280, false, 720, false, 0, false, 0, false, sdl.Color{0x29, 0x2c, 0x30, 255}, false, false, false)
 
 	child := CreateElement(-50, true, 100, true, 0, false, 0, false, sdl.Color{64, 0, 0, 255}, false, false, false)
 
@@ -482,6 +481,8 @@ func main() {
 
 		renderer.Copy(texture, &sdl.Rect{0, 0, windowW, windowH}, &sdl.Rect{0, 0, windowW, windowH})
 
+		texture.Destroy()
+
 		renderer.Present()
 
 		mouseX, mouseY, mouseState := sdl.GetMouseState()
@@ -495,6 +496,9 @@ func main() {
 			true,
 		})
 
-		sdl.Delay(10)
+		sdl.Delay(33)
 	}
+
+	renderer.Destroy()
+	window.Destroy()
 }
