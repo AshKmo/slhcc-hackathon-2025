@@ -23,6 +23,45 @@ type ElementContent interface {
 	Render(*sdl.Renderer) (*sdl.Texture, error)
 }
 
+type Text struct {
+	Container *Element
+
+	Content string
+
+	Font *ttf.Font
+	Color sdl.Color
+	Wrap bool
+}
+
+func (t *Text) SetContainer(e *Element) {
+	t.Container = e
+}
+
+func (t *Text) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
+	var surface *sdl.Surface
+
+	parentW, _ := t.Container.ExpandedSize()
+
+	var err error
+
+	if t.Wrap && parentW >= 0 {
+		surface, err = t.Font.RenderUTF8BlendedWrapped(t.Content, t.Color, int(parentW))
+	} else {
+		surface, err = t.Font.RenderUTF8Blended(t.Content, t.Color)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	texture, err := renderer.CreateTextureFromSurface(surface)
+	if err != nil {
+		return nil, err
+	}
+
+	return texture, nil
+}
+
 type Element struct {
 	Width int32
 	WidthPercent bool
@@ -75,14 +114,7 @@ func CreateElement(width int32, widthPercent bool, height int32, heightPercent b
 		BackgroundColor: backgroundColor,
 
 		ScrollX: scrollX,
-		ScrollPositionX: 0,
 		ScrollY: scrollY,
-		ScrollPositionY: 0,
-
-		Parent: nil,
-		Children: nil,
-
-		Content: nil,
 
 		EventHandlers: []func(Event){},
 
@@ -130,14 +162,16 @@ func (e *Element) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
 			return nil, err
 		}
 
+		textureWidth, textureHeight := contentWidth, contentHeight
+
 		if realWidth >= 0 {
-			contentWidth = realWidth
+			textureWidth = realWidth
 		}
 		if realHeight >= 0 {
-			contentHeight = realHeight
+			textureHeight = realHeight
 		}
 
-		elementTexture, err := renderer.CreateTexture(sdl.PIXELFORMAT_RGB24, sdl.TEXTUREACCESS_TARGET, contentWidth, contentHeight)
+		elementTexture, err := renderer.CreateTexture(sdl.PIXELFORMAT_RGB24, sdl.TEXTUREACCESS_TARGET, textureWidth, textureHeight)
 		if err != nil {
 			return nil, err
 		}
@@ -148,15 +182,23 @@ func (e *Element) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
 		}
 
 		renderer.SetDrawColor(e.BackgroundColor.R, e.BackgroundColor.G, e.BackgroundColor.B, e.BackgroundColor.A)
-		renderer.Clear()
-
-		err = renderer.Copy(contentTexture, &sdl.Rect{0, 0, contentWidth, contentHeight}, nil)
+		err = renderer.Clear()
 		if err != nil {
 			return nil, err
 		}
 
-		e.LastRenderedWidth = contentWidth
-		e.LastRenderedHeight = contentHeight
+		err = renderer.Copy(contentTexture, &sdl.Rect{0, 0, contentWidth, contentHeight}, &sdl.Rect{0, 0, contentWidth, contentHeight})
+		if err != nil {
+			return nil, err
+		}
+
+		if e.Selected {
+			renderer.SetDrawColor(0, 255, 255, 255)
+			drawThickRect(renderer, &sdl.Rect{0, 0, textureWidth, textureHeight}, 2)
+		}
+
+		e.LastRenderedWidth = textureWidth
+		e.LastRenderedHeight = textureHeight
 
 		return elementTexture, nil
 	} else {
@@ -190,7 +232,7 @@ func (e *Element) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
 			child.LastRenderedTexture = texture
 		}
 
-		if expandedW >= 0 {
+		if e.Width >= 0 {
 			maxWidth = expandedW
 		}
 
@@ -228,7 +270,7 @@ func (e *Element) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
 
 		currentY += currentLineHeight
 
-		if expandedH >= 0 {
+		if e.Height >= 0 {
 			currentY = expandedH
 		}
 
@@ -243,7 +285,10 @@ func (e *Element) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
 		}
 
 		renderer.SetDrawColor(e.BackgroundColor.R, e.BackgroundColor.G, e.BackgroundColor.B, e.BackgroundColor.A)
-		renderer.Clear()
+		err = renderer.Clear()
+		if err != nil {
+			return nil, err
+		}
 
 		for _, child := range(e.Children) {
 			_, _, width, height, err := child.LastRenderedTexture.Query()
@@ -296,10 +341,6 @@ func (e *Element) MouseUpdate(event MouseEvent) {
 }
 
 func (e *Element) AppendChild(child *Element) {
-	if e.Children == nil {
-		e.Children = []*Element{}
-	}
-
 	e.Content = nil
 
 	child.Parent = e
@@ -307,14 +348,14 @@ func (e *Element) AppendChild(child *Element) {
 	e.Children = append(e.Children, child)
 }
 
-func (e *Element) AddContent(content ElementContent) {
-	if content == nil {
-		return
-	}
-
+func (e *Element) SetContent(content ElementContent) {
 	e.Children = nil
+
 	e.Content = content
-	content.SetContainer(e)
+
+	if content != nil {
+		content.SetContainer(e)
+	}
 }
 
 type SDLEventWatch struct{}
@@ -336,6 +377,27 @@ func (_ SDLEventWatch) FilterEvent(event sdl.Event, _ any) bool {
 	}
 
 	return true
+}
+
+func drawThickRect(renderer *sdl.Renderer, rect *sdl.Rect, thickness int32) error {
+	err := renderer.FillRect(&sdl.Rect{rect.X, rect.Y, rect.W, thickness})
+	if err != nil {
+		return err
+	}
+	err = renderer.FillRect(&sdl.Rect{rect.X, rect.Y, thickness, rect.H})
+	if err != nil {
+		return err
+	}
+	err = renderer.FillRect(&sdl.Rect{rect.X + rect.W - thickness, 0, thickness, rect.H})
+	if err != nil {
+		return err
+	}
+	err = renderer.FillRect(&sdl.Rect{0, rect.Y + rect.H - thickness, rect.W, thickness})
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func main() {
@@ -360,13 +422,26 @@ func main() {
 
 	sdl.AddEventWatch(SDLEventWatch{}, nil)
 
-	root := CreateElement(1280, false, 720, false, 0, false, 0, false, sdl.Color{0, 255, 255, 255}, false, false, false)
+	root := CreateElement(1280, false, 720, false, 0, false, 0, false, sdl.Color{64, 64, 64, 255}, false, false, false)
 
-	child := CreateElement(50, true, 100, true, 0, false, 0, false, sdl.Color{255, 0, 0, 255}, false, false, false)
+	child := CreateElement(-50, true, 100, true, 0, false, 0, false, sdl.Color{64, 0, 0, 255}, false, false, false)
 
 	root.AppendChild(child)
 
-	childChild := CreateElement(50, true, 50, true, 25, true, 0, false, sdl.Color{0, 255, 0, 255}, false, false, false)
+	childChild := CreateElement(500, false, 50, true, 25, false, 0, false, sdl.Color{0, 255, 0, 255}, false, false, true)
+
+	font, err := ttf.OpenFont("./fonts/Xanh_Mono/XanhMono-Regular.ttf", 24)
+
+	if err != nil {
+		panic(err)
+	}
+
+	childChild.SetContent(&Text{
+		Content: "This is cool",
+		Font: font,
+		Color: sdl.Color{255, 0, 255, 255},
+		Wrap: true,
+	})
 
 	child.AppendChild(childChild)
 
@@ -390,7 +465,10 @@ func main() {
 		root.Height = windowH
 
 		renderer.SetDrawColor(0, 0, 0, 255)
-		renderer.Clear()
+		err = renderer.Clear()
+		if err != nil {
+			panic(err)
+		}
 
 		texture, err := root.Render(renderer)
 		if err != nil {
