@@ -7,15 +7,17 @@ import (
 
 type Event interface{}
 
-type MouseEvent struct {
-	X int32
-	Y int32
+type MouseHoverEvent bool
 
-	ButtonLeft bool
-	ButtonMiddle bool
-	ButtonRight bool
+const (
+	MouseButtonEventDown = iota
+	MouseButtonEventUp
+	MouseButtonEventClick
+)
 
-	OverMe bool
+type MouseButtonEvent struct {
+	Type int
+	Button int
 }
 
 type ElementContent interface {
@@ -89,8 +91,13 @@ type Element struct {
 
 	EventHandlers []func(Event)
 
+	IsTextInput bool
+
 	Selectable bool
 	Selected bool
+
+	MouseHovering bool
+	MouseButtonClicks [3]bool
 
 	RenderingTexture *sdl.Texture
 
@@ -102,7 +109,7 @@ type Element struct {
 	LastRenderedMarginY int32
 }
 
-func CreateElement(width int32, widthPercent bool, height int32, heightPercent bool, marginX int32, marginXPercent bool, marginY int32, marginYPercent bool, backgroundColor sdl.Color, scrollX, scrollY bool, selectable bool) *Element {
+func CreateElement(width int32, widthPercent bool, height int32, heightPercent bool, marginX int32, marginXPercent bool, marginY int32, marginYPercent bool, backgroundColor sdl.Color, scrollX, scrollY, isTextInput, selectable bool) *Element {
 	return &Element {
 		Width: width,
 		WidthPercent: widthPercent,
@@ -120,6 +127,8 @@ func CreateElement(width int32, widthPercent bool, height int32, heightPercent b
 		ScrollY: scrollY,
 
 		EventHandlers: []func(Event){},
+
+		IsTextInput: isTextInput,
 
 		Selectable: selectable,
 	}
@@ -329,21 +338,68 @@ func (e *Element) AddEventHandler(handler func(Event)) {
 	e.EventHandlers = append(e.EventHandlers, handler)
 }
 
-func (e *Element) MouseUpdate(event MouseEvent) {
-	for _, handler := range(e.EventHandlers) {
-		handler(event)
+func (e *Element) Deselect() {
+	if e.Selectable {
+		e.Selected = false
 	}
 
 	for _, child := range(e.Children) {
-		overChild := event.OverMe && event.X >= child.LastRenderedX && event.X < child.LastRenderedX + child.LastRenderedWidth && event.Y >= child.LastRenderedY && event.Y < child.LastRenderedY + child.LastRenderedHeight
+		child.Deselect()
+	}
+}
 
-		childEvent := MouseEvent{event.X - child.LastRenderedX, event.Y - child.LastRenderedY, event.ButtonLeft, event.ButtonMiddle, event.ButtonRight, overChild}
+func (e *Element) Emit(event Event) {
+	for _, handler := range(e.EventHandlers) {
+		handler(event)
+	}
+}
 
-		child.MouseUpdate(childEvent)
+func (e *Element) MouseUpdate(root *Element, x, y int32, oldMouseButtonStates [3]bool, newMouseButtonStates [3]bool, overMe bool) {
+	if overMe && !e.MouseHovering {
+		// hover start
+		e.MouseHovering = true
+
+		e.Emit(MouseHoverEvent(true))
 	}
 
-	if event.ButtonLeft {
-		e.Selected = e.Selectable && event.OverMe
+	if !overMe && e.MouseHovering {
+		e.MouseHovering = false
+
+		e.Emit(MouseHoverEvent(false))
+	}
+
+	for b, newState := range(newMouseButtonStates) {
+		oldState := oldMouseButtonStates[b]
+
+		if !oldState && newState && overMe {
+			e.MouseButtonClicks[b] = true
+
+			root.Deselect()
+
+			e.Emit(MouseButtonEvent{MouseButtonEventDown, b})
+
+			if e.Selectable {
+				e.Selected = true
+			}
+		}
+
+		if !overMe {
+			e.MouseButtonClicks[b] = false
+		}
+
+		if oldState && !newState && overMe {
+			e.Emit(MouseButtonEvent{MouseButtonEventUp, b})
+
+			if e.MouseButtonClicks[b] {
+				e.Emit(MouseButtonEvent{MouseButtonEventClick, b})
+			}
+		}
+	}
+
+	for _, child := range(e.Children) {
+		overChild := overMe && x >= child.LastRenderedX && x < child.LastRenderedX + child.LastRenderedWidth && y >= child.LastRenderedY && y < child.LastRenderedY + child.LastRenderedHeight
+
+		child.MouseUpdate(root, x - child.LastRenderedX, y - child.LastRenderedY, oldMouseButtonStates, newMouseButtonStates, overChild)
 	}
 }
 
@@ -365,25 +421,14 @@ func (e *Element) SetContent(content ElementContent) {
 	}
 }
 
-type SDLEventWatch struct{}
+func (e *Element) Locate() (int32, int32) {
+	if e.Parent != nil {
+		parentX, parentY := e.Parent.Locate()
 
-func (_ SDLEventWatch) FilterEvent(event sdl.Event, _ any) bool {
-	switch e := event.(type) {
-	case *sdl.WindowEvent:
-		window, err := sdl.GetWindowFromID(e.WindowID)
-		if err != nil {
-			panic(err)
-		}
-
-		switch e.Event {
-		case sdl.WINDOWEVENT_RESIZED, sdl.WINDOWEVENT_SIZE_CHANGED:
-			if window.GetFlags() & sdl.WINDOW_RESIZABLE != 0 {
-				window.SetSize(e.Data1, e.Data2)
-			}
-		}
+		return e.LastRenderedX + parentX, e.LastRenderedY + parentY
 	}
 
-	return true
+	return 0, 0
 }
 
 func drawThickRect(renderer *sdl.Renderer, rect *sdl.Rect, thickness int32) error {
@@ -392,6 +437,22 @@ func drawThickRect(renderer *sdl.Renderer, rect *sdl.Rect, thickness int32) erro
 		err := renderer.DrawRect(&sdl.Rect{rect.X + thickness, rect.Y + thickness, rect.W - 2 * thickness, rect.H - 2 * thickness})
 		if err != nil {
 			return err
+		}
+	}
+
+	return nil
+}
+
+func checkForTextInput(e *Element) *Element {
+	if e.Selected && e.IsTextInput {
+		return e
+	}
+
+	for _, child := range(e.Children) {
+		textInputElement := checkForTextInput(child)
+
+		if textInputElement != nil {
+			return textInputElement
 		}
 	}
 
@@ -418,16 +479,13 @@ func main() {
 		panic(err)
 	}
 
-	sdl.AddEventWatch(SDLEventWatch{}, nil)
+	root := CreateElement(1280, false, 720, false, 0, false, 0, false, sdl.Color{0x29, 0x2c, 0x30, 255}, false, false, false, false)
 
-	//#292c30
-	root := CreateElement(1280, false, 720, false, 0, false, 0, false, sdl.Color{0x29, 0x2c, 0x30, 255}, false, false, false)
-
-	child := CreateElement(-50, true, 100, true, 0, false, 0, false, sdl.Color{64, 0, 0, 255}, false, false, false)
+	child := CreateElement(-50, true, 100, true, 0, false, 0, false, sdl.Color{64, 0, 0, 255}, false, false, false, false)
 
 	root.AppendChild(child)
 
-	childChild := CreateElement(500, false, 50, true, 25, false, 0, false, sdl.Color{0, 255, 0, 255}, false, false, true)
+	childChild := CreateElement(500, false, 50, true, 25, false, 0, false, sdl.Color{0, 255, 0, 255}, false, false, true, true)
 
 	font, err := ttf.OpenFont("./fonts/Xanh_Mono/XanhMono-Regular.ttf", 24)
 
@@ -443,6 +501,8 @@ func main() {
 	})
 
 	child.AppendChild(childChild)
+
+	var oldMouseButtonStates [3]bool
 
 	running := true
 	for running {
@@ -487,16 +547,29 @@ func main() {
 
 		mouseX, mouseY, mouseState := sdl.GetMouseState()
 
-		root.MouseUpdate(MouseEvent{
-			mouseX,
-			mouseY,
-			mouseState & sdl.BUTTON_LEFT != 0,
-			mouseState & sdl.BUTTON_MIDDLE != 0,
-			mouseState & sdl.BUTTON_RIGHT != 0,
-			true,
-		})
+		buttonLeft, buttonMiddle, buttonRight := mouseState & 1 != 0, mouseState & 2 != 0, mouseState & 4 != 0
 
-		sdl.Delay(33)
+		newMouseButtonStates := [3]bool{buttonLeft, buttonMiddle, buttonRight}
+
+		root.MouseUpdate(root, mouseX, mouseY, oldMouseButtonStates, newMouseButtonStates, true)
+
+		oldMouseButtonStates = newMouseButtonStates
+
+		textInputElement := checkForTextInput(root)
+
+		if textInputElement != nil {
+			inputElementX, inputElementY := textInputElement.Locate()
+
+			sdl.SetTextInputRect(&sdl.Rect{inputElementX, inputElementY, textInputElement.LastRenderedWidth, textInputElement.LastRenderedHeight})
+
+			if !sdl.IsTextInputActive() {
+				sdl.StartTextInput()
+			}
+		} else if sdl.IsTextInputActive() {
+			sdl.StopTextInput()
+		}
+
+		sdl.Delay(20)
 	}
 
 	renderer.Destroy()
