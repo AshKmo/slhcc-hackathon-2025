@@ -216,8 +216,6 @@ func (e *Element) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
 
 		return elementTexture, nil
 	} else {
-		expandedW, expandedH := e.ExpandedSize()
-
 		var maxWidth int32
 
 		for _, child := range(e.Children) {
@@ -235,10 +233,10 @@ func (e *Element) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
 			child.LastRenderedMarginY = child.MarginY
 
 			if child.MarginXPercent {
-				child.LastRenderedMarginX = child.MarginX * expandedW / 100
+				child.LastRenderedMarginX = child.MarginX * realWidth / 100
 			}
 			if child.MarginYPercent {
-				child.LastRenderedMarginY = child.MarginY * expandedH / 100
+				child.LastRenderedMarginY = child.MarginY * realHeight / 100
 			}
 
 			maxWidth += width + 2 * child.LastRenderedMarginX
@@ -247,7 +245,7 @@ func (e *Element) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
 		}
 
 		if e.Width >= 0 {
-			maxWidth = expandedW
+			maxWidth = realWidth
 		}
 
 		var currentX, currentY int32
@@ -285,7 +283,7 @@ func (e *Element) Render(renderer *sdl.Renderer) (*sdl.Texture, error) {
 		currentY += currentLineHeight
 
 		if e.Height >= 0 {
-			currentY = expandedH
+			currentY = realHeight
 		}
 
 		elementTexture, err := renderer.CreateTexture(sdl.PIXELFORMAT_RGB24, sdl.TEXTUREACCESS_TARGET, maxWidth, currentY)
@@ -356,7 +354,6 @@ func (e *Element) Emit(event Event) {
 
 func (e *Element) MouseUpdate(root *Element, x, y int32, oldMouseButtonStates [3]bool, newMouseButtonStates [3]bool, overMe bool) {
 	if overMe && !e.MouseHovering {
-		// hover start
 		e.MouseHovering = true
 
 		e.Emit(MouseHoverEvent(true))
@@ -469,38 +466,12 @@ func main() {
 		panic(err)
 	}
 
-	_, err = window.GetSurface()
-	if err != nil {
-		panic(err)
-	}
-
-	renderer, err := window.GetRenderer()
+	renderer, err := sdl.CreateRenderer(window, -1, sdl.RENDERER_SOFTWARE)
 	if err != nil {
 		panic(err)
 	}
 
 	root := CreateElement(1280, false, 720, false, 0, false, 0, false, sdl.Color{0x29, 0x2c, 0x30, 255}, false, false, false, false)
-
-	child := CreateElement(-50, true, 100, true, 0, false, 0, false, sdl.Color{64, 0, 0, 255}, false, false, false, false)
-
-	root.AppendChild(child)
-
-	childChild := CreateElement(500, false, 50, true, 25, false, 0, false, sdl.Color{0, 255, 0, 255}, false, false, true, true)
-
-	font, err := ttf.OpenFont("./fonts/Xanh_Mono/XanhMono-Regular.ttf", 24)
-
-	if err != nil {
-		panic(err)
-	}
-
-	childChild.SetContent(&Text{
-		Content: "This is cool",
-		Font: font,
-		Color: sdl.Color{255, 0, 255, 255},
-		Wrap: true,
-	})
-
-	child.AppendChild(childChild)
 
 	var oldMouseButtonStates [3]bool
 
@@ -571,7 +542,4 @@ func main() {
 
 		sdl.Delay(20)
 	}
-
-	renderer.Destroy()
-	window.Destroy()
 }
