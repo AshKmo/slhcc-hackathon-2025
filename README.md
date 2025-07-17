@@ -2,7 +2,10 @@
 The best code editor I have in my GitHub account.
 
 ## Building
-Install the necessary Go modules with `go mod tidy`, then run `go build` to build the app.
+- Clone the repo
+- Install the SDL2, SDL2\_ttf and SDL2\_img library development packages for your system
+- Run `go mod tidy` to install the necessary go modules
+- Run `go build` to build the app
 
 ## Running
 This program relies on SDL2, SDL2\_ttf and SDL2\_img, so make sure you install the necessary packages on your system before running.
